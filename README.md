@@ -1,5 +1,5 @@
 # learning_with_FORCE
- Force algorithm from "* Generating Coherent Patterns of Activity from Chaotic Neural Networks *" (2009) by David Sussillo et al.
+ Force algorithm from "*Generating Coherent Patterns of Activity from Chaotic Neural Networks*" (2009) by David Sussillo et al.
  
  Here is what it can do:
  
