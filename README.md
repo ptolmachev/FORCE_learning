@@ -2,7 +2,7 @@
  FORCE learning algorithm from "*Generating Coherent Patterns of Activity from Chaotic Neural Networks*" (2009) by David Sussillo et al. 
  for training redout weights of the reservoir with the following dynamics:
  
-$$\tau \frac{d \bold{x}}{dt} = (W_{rec})f(\bold{x}) + w_{inp} I_{inp} + u_{fb} z$$,
+https://render.githubusercontent.com/render/math?math=\tau \frac{d \bold{x}}{dt} = (W_{rec})f(\bold{x}) + w_{inp} I_{inp} + u_{fb} z.
 
 where 
 
