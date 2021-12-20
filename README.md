@@ -3,8 +3,8 @@
  
  Here is what it can do:
  
- ## Periodic output give periodic input:
-![periodic output give periodic input](https://github.com/ptolmachev/FORCE_learning/blob/main/imgs/sine_wave_testing.png)
+ ## Periodic output given periodic input:
+![periodic output given periodic input](https://github.com/ptolmachev/FORCE_learning/blob/main/imgs/sine_wave_testing.png)
 
 ## Periodic output with zero input
 ![periodic output with zero input](https://github.com/ptolmachev/FORCE_learning/blob/main/imgs/triangle_wave_testing.png)
