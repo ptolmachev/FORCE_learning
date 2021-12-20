@@ -14,19 +14,20 @@ import numpy as np
 from tqdm.auto import tqdm
 
 class CT_RNN():
-    def __init__(self, N, num_inps, dt, tau, maxlen=1000000, bias=False):
+    def __init__(self, N, num_inps, dt, tau, sr=1.5, maxlen=1000000, bias=False):
         self.maxlen = maxlen
         self.tau = tau
         self.dt = dt
         self.N = N
         self.num_inps = num_inps
 
-        sparcity_param = 0.4
-        W_rec = np.array(generate_internal_weights(N, proba=sparcity_param, sr=1.5).todense())
+        sparcity_param = 0.3
+        W_rec = np.array(generate_internal_weights(N, proba=sparcity_param, sr=sr).todense())
         W_inp = generate_input_weights(N, num_inps, proba=sparcity_param, input_scaling=3, input_bias=False)
-        w_out = np.zeros(N)
+        w_out = 1/(np.sqrt(self.N)) * np.random.rand(N)
+        # w_out = np.zeros(N) # THIS IS EXTREMELY IMPORTANT!
+        w_fb = 2.0 * (np.random.rand(N) - 0.5) #check how important this initialization is
         # w_fb = generate_input_weights(N, 1, proba=sparcity_param, input_scaling=3, input_bias=False).flatten()
-        w_fb = 2.0 * (np.random.rand(N) - 0.5)
 
         self.W_rec = W_rec
         self.W_inp = W_inp
@@ -42,19 +43,19 @@ class CT_RNN():
         self.v = self.v_init
 
         self.t = 0
-        self.activation = lambda x: (1+np.tanh(x))/2.0
-        # self.activation = lambda x: np.tanh(x)
+        # self.activation = lambda x: (1+np.tanh(x))/2.0
+        self.activation = lambda x: np.tanh(x)
         self.v_history = deque(maxlen=maxlen)
 
-    def rhs(self, inp_vect, noise):
+    def rhs(self, inp_vect, noise=False):
         z = np.sum(self.w_out * self.activation(self.v)) # output signal
         return (1.0/self.tau) * (-self.v +
                                  (self.W_rec @ self.activation(self.v)
                                   + self.W_inp @ self.activation(inp_vect)
-                                  + self.w_fb * (self.activation(z) + noise * 0.1 * np.random.randn(self.N)) #feedback loop
-                                  + self.b))
+                                  + self.w_fb * (self.activation(z) + noise * 0.1 * np.random.randn(self.N))) #feedback loop
+                                  + self.b)
 
-    def step(self, inp_vect, noise=False):
+    def step(self, inp_vect, noise):
         self.v = self.v + self.dt * self.rhs(inp_vect, noise)
         return None
 
@@ -76,13 +77,11 @@ class CT_RNN():
         N_steps = int(np.ceil(T/self.dt))
         for i in (range(N_steps)):
             inp_vect = input_array[:, i]
-            self.step(inp_vect)
+            self.step(inp_vect, noise=False)
             self.update_history()
         return None
 
-    def train(self, T, input_array, target_array):
-        #number of different sequence to sequence mappings the network has to learn
-        # num_maps = target_array.shape[0]
+    def train(self, T, input_array, target_array, noise):
         # both input_array and target_array must be the length of int(np.ceil(T/self.dt))!
         N_steps = int(np.ceil(T / self.dt))
         # initialize estimate of inverse hessian matrix
@@ -95,29 +94,35 @@ class CT_RNN():
         for i in tqdm(range(N_steps)):
             inp_vect = input_array[:, i]
             target = target_array[i] # scalar for now
-            self.step(inp_vect, noise=True)
-            z, e, dw = self.update_weights(target)
+            self.step(inp_vect, noise=noise)
+
+            z, e, dw = self.get_weight_update(target)
+            self.w_out = self.w_out + dw
+
             self.error_buffer.append(e**2)
             self.dw_norm_buffer.append(np.linalg.norm(dw))
             self.z_buffer.append(z)
             self.update_history()
         return self.z_buffer, self.error_buffer, self.dw_norm_buffer
 
-    def update_weights(self, target):
+    def get_weight_update(self, target):
+        # update the error for the linear readout: y_t - r_t^T w_{out}_{t-1}
+        # where y_t is the target at time t,
+        # r_t is the vector of neural firing rates at time t,
+        # and the \w_{out}_{t-1} - readout weights
         r = self.activation(self.v)
+        z = np.sum(self.w_out * r) # output signal
+        e = (target - z)
 
-        # update an estimate of inverse hessian matrix
+        # # update an estimate of (X^T X)^{-1} matrix:
+        # P_{t} = P_{t-1} - ((P_{t-1} r_t) (r_t^T P_{t-1})) / (1 + r_t^T P_{t-1} r_t)
         Pr = (self.P @ r.reshape(-1, 1)).flatten()
         rPr = np.sum(r * Pr)
         c = 1.0 / (1 + rPr)
         self.P = self.P - c * (Pr.reshape(-1, 1) @ Pr.reshape(1, -1))
 
-        # update the error for the linear readout
-        z = np.sum(self.w_out * self.activation(self.v)) # output signal
-        e = (z - target)
         # update the output weights
-        dw = -e * Pr * c
-        self.w_out = deepcopy(self.w_out + dw)
+        dw = e * Pr * c
         return z, e, dw
 
     def get_history(self):
@@ -151,14 +156,14 @@ if __name__ == '__main__':
     num_inputs = 2
     T = 2000 #ms
 
-    rnn = CT_RNN(N,num_inps=num_inputs, dt=dt, tau=tau)
+    rnn = CT_RNN(N,num_inps=num_inputs, dt=dt, tau=tau, sr=2.0)
 
     #periodic input
     period = 200 #ms
     phi = 2 * np.pi * np.random.rand()
     input_array = np.zeros((num_inputs,int(np.ceil(T/dt))))
-    input_array[0, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (period))
-    input_array[1, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (2 * period) + phi)
+    # input_array[0, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (period))
+    # input_array[1, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (2 * period) + phi)
 
     # constant input
     # input_array = np.zeros((num_inputs,int(np.ceil(T/dt))))

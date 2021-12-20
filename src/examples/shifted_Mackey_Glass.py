@@ -1,16 +1,36 @@
 '''
-This script uses FORCE learning procedure to learn a mapping of sine wave input to the sum of sine waves
+This script uses FORCE learning to learn to produce shifted Mackey-Glass trajectory given the Mackey-Glass input
+so that the output temporally precedes the input! (prediction task)
 '''
 
 import numpy as np
-from tqdm.auto import tqdm
 from matplotlib import pyplot as plt
 from src.CT_RNN import CT_RNN
 from src.utils.utils import get_project_root
 import os
+from collections import deque
+
+def generate_Mackey_Glass_trajectory(T, dt, a=0.2, b=0.1, n=10, tau=17):
+    N_steps = int(np.ceil(T/dt))
+    trajectory = np.empty(N_steps)
+    x = -1.1
+    N = 3*int(tau/dt)
+    xs = deque(maxlen=N)
+    xs.append(x)
+    for i in range(N_steps):
+        rhs = (1/3)*(a*xs[0]/(1+xs[0]**n) - b*xs[-1])
+        x = x + dt * rhs
+        xs.append(x)
+        trajectory[i] = x
+    return trajectory
+
+def scale(signal):
+    mx = np.max(signal)
+    mn = np.min(signal)
+    return 2 * (signal - mn) / (mx - mn) - 1
 
 def plot_performance(time, input, target, z, title):
-    fig = plt.figure(figsize=(15,6))
+    fig = plt.figure(figsize=(15, 6))
     plt.plot(time, target, color ='r', label = 'target')
     plt.plot(time, z, color='b', label = 'output')
     plt.plot(time, input, color='g', label='input', linestyle='--', alpha=0.5)
@@ -40,62 +60,61 @@ def plot_stats(time, errs, dw_norms):
 if __name__ == '__main__':
     N = 1000
     tau = 10  # ms
-    dt = 1  # ms
+    dt = 0.1  # ms
     num_inputs = 1
-    T_train = 5*1440  # ms
+    T_train = 4000  # ms
+    delay = 60 #ms
+    delay_steps = int(delay/dt)
 
-    rnn = CT_RNN(N, num_inps=num_inputs, dt=dt, tau=tau)
+    rnn = CT_RNN(N, num_inps=num_inputs, dt=dt, tau=tau, sr=1.7)
 
     sim_steps = int(np.ceil(T_train/dt))
     simtime_array = np.arange(sim_steps)*dt
 
-    input_array = np.ones((num_inputs, sim_steps))
-    # periodic input
-    inp_period = 200 #ms
-    input_array[0, :] = np.sin(2 * np.pi * (simtime_array / inp_period))
+    trajectory = generate_Mackey_Glass_trajectory(T=T_train + delay_steps*dt, dt=dt)
+    input_array = trajectory[:-delay_steps].reshape(1, -1)
+    target = trajectory[delay_steps:]
 
-    # periodic output
-    phi_1, phi_2, phi_3, phi_4 = 2*np.pi*np.random.rand(4)
-    amp = 1.3
-    out_period = 200 #ms
-    target = (amp / 1.0) * np.sin(1.0 * np.pi * (1.0/(out_period)) * simtime_array + phi_1) + \
-         (amp / 2.0) * np.sin(2.0 * np.pi * (1.0/(out_period)) * simtime_array + phi_2) + \
-         (amp / 6.0) * np.sin(3.0 * np.pi * (1.0/(out_period)) * simtime_array + phi_3) + \
-         (amp / 3.0) * np.sin(4.0 * np.pi * (1.0/(out_period)) * simtime_array + phi_4)
-    target = target / 1.5
+    # fig = plt.figure(figsize=(15, 6))
+    # plt.plot(simtime_array, target, color='r', label = r'$x$')
+    # plt.legend(fontsize=24)
+    # plt.show()
 
-    zs, errs, dw_norms = rnn.train(T_train, input_array, target)
+    zs, errs, dw_norms = rnn.train(T_train, input_array, target, noise=False)
     print(f"error for the last 100 timesteps: {np.mean(errs[-100:])}")
-    # rnn.plot_history(list_of_neurons=[0,1,2,3,4,5])
+    rnn.plot_history(list_of_neurons=[0,1,2,3,4,5])
 
     fig = plot_performance(time=simtime_array, input=input_array[0, :], target=target, z=zs, title="Training")
-    img_file = os.path.join(get_project_root(), "imgs", "sine_wave_training.pdf")
-    plt.savefig(img_file, ssbbox_inches="tight")
+    img_file = os.path.join(get_project_root(), "imgs", "shifted_mackey_glass_training")
+    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
+    plt.savefig(img_file + ".png", ssbbox_inches="tight")
     plt.show()
     plt.close()
+
     fig = plot_stats(simtime_array, errs, dw_norms)
-    img_file = os.path.join(get_project_root(), "imgs", "sine_wave_training_stats.pdf")
-    plt.savefig(img_file, bbox_inches="tight")
+    img_file = os.path.join(get_project_root(), "imgs", "shifted_mackey_glass_training_stats")
+    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
+    plt.savefig(img_file + ".png", ssbbox_inches="tight")
     plt.show()
     plt.close()
 
     # TESTING
     #assumes that T_test < T_train
-    T_test = 1440 # ms
+    T_test = 1000 # ms
     sim_steps = int(np.ceil(T_test/dt))
     simtime_array = np.arange(sim_steps)*dt
     input_array = input_array[:, :sim_steps]
     target = target[:sim_steps]
     rnn.reset_v()
-
     rnn.clear_history()
     rnn.run(T=T_test, input_array=input_array)
     vs = rnn.get_history()
     # get the output as a time sequence
     zs = np.sum((np.hstack([rnn.w_out.reshape(-1, 1)]*vs.shape[-1]) * rnn.activation(vs)), axis = 0)
     fig = plot_performance(time=simtime_array, input=input_array[0,:], target=target, z=zs, title="Test")
-    img_file = os.path.join(get_project_root(), "imgs", "sine_wave_testing.pdf")
-    plt.savefig(img_file, ssbbox_inches="tight")
+    img_file = os.path.join(get_project_root(), "imgs", "shifted_mackey_glass_testing")
+    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
+    plt.savefig(img_file + ".png", ssbbox_inches="tight")
     plt.show()
     plt.close()
 
