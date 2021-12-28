@@ -1,38 +1,50 @@
 '''
 A script containing a continuous-time RNN with feedback loop
 governed by the equations:
-tau dv/dt = -v + W_rec * sigma(v) + W_inp * sigma(u) + w_fb * sigma(z) + b
-z = w_out @ sigma(v)
+tau dv/dt = -v + W_rec * sigma(v) + W_inp * sigma(u) + W_fb * sigma(z) + b
+z = W_out @ sigma(v)
 # For now output z is a scalar!
 sigma(h) function described in 'state_function.py'
 '''
-from reservoirpy.mat_gen import generate_input_weights, generate_internal_weights
 from matplotlib import pyplot as plt
 from copy import deepcopy
 from collections import deque
 import numpy as np
+from scipy.sparse import random
+from scipy.sparse.linalg import eigs
 from tqdm.auto import tqdm
+from scipy.stats import uniform
+
+def generate_recurrent_weights(N, density, sr):
+    A = (1.0/(density * np.sqrt(N))) * np.array(random(N, N, density, data_rvs=uniform(-1, 2).rvs).todense())
+    #get eigenvalues
+    w, v = eigs(A)
+    A = A * (sr/np.max(np.abs(w)))
+    return A
 
 class CT_RNN():
-    def __init__(self, N, num_inps, dt, tau, sr=1.5, maxlen=1000000, bias=False):
+    def __init__(self, N, num_inps, num_outs, dt, tau=25, sr=0.9, maxlen=1000000, bias=False, sparcity_param = 0.1,
+                 input_scaling=1, fb_scaling=1):
         self.maxlen = maxlen
         self.tau = tau
         self.dt = dt
         self.N = N
         self.num_inps = num_inps
+        self.num_outs = num_outs
+        self.input_scaling = input_scaling
+        self.fb_scaling = fb_scaling
+        self.sr = sr
+        self.sparcity_param = sparcity_param
 
-        sparcity_param = 0.3
-        W_rec = np.array(generate_internal_weights(N, proba=sparcity_param, sr=sr).todense())
-        W_inp = generate_input_weights(N, num_inps, proba=sparcity_param, input_scaling=3, input_bias=False)
-        w_out = 1/(np.sqrt(self.N)) * np.random.rand(N)
-        # w_out = np.zeros(N) # THIS IS EXTREMELY IMPORTANT!
-        w_fb = 2.0 * (np.random.rand(N) - 0.5) #check how important this initialization is
-        # w_fb = generate_input_weights(N, 1, proba=sparcity_param, input_scaling=3, input_bias=False).flatten()
+        W_rec = generate_recurrent_weights(self.N, density=self.sparcity_param, sr=self.sr)
+        W_inp = self.input_scaling * (2 * np.random.rand(N, num_inps) - 1)
+        W_fb = self.fb_scaling * (2 * np.random.rand(N, num_outs) - 1)
+        W_out = 1 / (np.sqrt(self.N)) * np.random.rand(num_outs, N)
 
         self.W_rec = W_rec
         self.W_inp = W_inp
-        self.w_out = w_out
-        self.w_fb = w_fb
+        self.W_fb = W_fb
+        self.W_out = W_out
 
         if bias == False:
             self.b = np.zeros(self.N)
@@ -43,20 +55,24 @@ class CT_RNN():
         self.v = self.v_init
 
         self.t = 0
-        # self.activation = lambda x: (1+np.tanh(x))/2.0
         self.activation = lambda x: np.tanh(x)
         self.v_history = deque(maxlen=maxlen)
 
-    def rhs(self, inp_vect, noise=False):
-        z = np.sum(self.w_out * self.activation(self.v)) # output signal
-        return (1.0/self.tau) * (-self.v +
-                                 (self.W_rec @ self.activation(self.v)
+    def rhs(self, v, inp_vect, noise_amp):
+        z = self.W_out @ self.activation(v)
+        return (1.0/self.tau) * (-v +
+                                 (self.W_rec @ self.activation(v)
                                   + self.W_inp @ self.activation(inp_vect)
-                                  + self.w_fb * (self.activation(z) + noise * 0.1 * np.random.randn(self.N))) #feedback loop
-                                  + self.b)
+                                  + self.W_fb @ (self.activation(z) + noise_amp * np.random.randn(self.num_outs))
+                                  + self.b))
 
-    def step(self, inp_vect, noise):
-        self.v = self.v + self.dt * self.rhs(inp_vect, noise)
+    def step(self, inp_vect, noise_amp):
+        # k1 = self.dt * self.rhs(self.v, inp_vect, noise_amp)
+        # k2 = self.dt * self.rhs(self.v + k1 / 2, inp_vect, noise_amp)
+        # k3 = self.dt * self.rhs(self.v + k2 / 2, inp_vect, noise_amp)
+        # k4 = self.dt * self.rhs(self.v + k3, inp_vect, noise_amp)
+        # self.v = self.v + (k1 + 2 * k2 + 2 * k3 + k4) / 6
+        self.v = self.v + self.dt * self.rhs(self.v, inp_vect, noise_amp)
         return None
 
     def update_history(self):
@@ -72,16 +88,16 @@ class CT_RNN():
         self.v = self.v_init
         return None
 
-    def run(self, T, input_array):
+    def run(self, T, input_array, noise_amp=0):
         #input array must be the length of int(np.ceil(T/self.dt))!
         N_steps = int(np.ceil(T/self.dt))
         for i in (range(N_steps)):
             inp_vect = input_array[:, i]
-            self.step(inp_vect, noise=False)
+            self.step(inp_vect, noise_amp=0)
             self.update_history()
         return None
 
-    def train(self, T, input_array, target_array, noise):
+    def train(self, T, input_array, target_array, noise_amp):
         # both input_array and target_array must be the length of int(np.ceil(T/self.dt))!
         N_steps = int(np.ceil(T / self.dt))
         # initialize estimate of inverse hessian matrix
@@ -93,14 +109,14 @@ class CT_RNN():
 
         for i in tqdm(range(N_steps)):
             inp_vect = input_array[:, i]
-            target = target_array[i] # scalar for now
-            self.step(inp_vect, noise=noise)
+            target = target_array[i] #scalar for now
+            self.step(inp_vect, noise_amp=noise_amp)
 
-            z, e, dw = self.get_weight_update(target)
-            self.w_out = self.w_out + dw
+            z, e, dW = self.get_weight_update(target)
+            self.W_out = deepcopy(self.W_out + dW)
 
             self.error_buffer.append(e**2)
-            self.dw_norm_buffer.append(np.linalg.norm(dw))
+            self.dw_norm_buffer.append(np.linalg.norm(dW))
             self.z_buffer.append(z)
             self.update_history()
         return self.z_buffer, self.error_buffer, self.dw_norm_buffer
@@ -110,8 +126,10 @@ class CT_RNN():
         # where y_t is the target at time t,
         # r_t is the vector of neural firing rates at time t,
         # and the \w_{out}_{t-1} - readout weights
+        # WARNING
+        # WORKS ONLY WITH num_outs = 1 for now!
         r = self.activation(self.v)
-        z = np.sum(self.w_out * r) # output signal
+        z = self.W_out @ r # output signal
         e = (target - z)
 
         # # update an estimate of (X^T X)^{-1} matrix:
@@ -151,24 +169,20 @@ class CT_RNN():
 
 if __name__ == '__main__':
     N = 100
-    tau = 10 #ms
+    tau = 25 #ms
     dt = 1 #ms
     num_inputs = 2
-    T = 2000 #ms
+    num_outs = 1
+    T = 4000 #ms
 
-    rnn = CT_RNN(N,num_inps=num_inputs, dt=dt, tau=tau, sr=2.0)
-
+    rnn = CT_RNN(N, num_inps=num_inputs, num_outs=num_outs, dt=dt, tau=tau, sr=1.2, input_scaling=3)
     #periodic input
     period = 200 #ms
     phi = 2 * np.pi * np.random.rand()
-    input_array = np.zeros((num_inputs,int(np.ceil(T/dt))))
-    # input_array[0, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (period))
-    # input_array[1, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (2 * period) + phi)
-
-    # constant input
-    # input_array = np.zeros((num_inputs,int(np.ceil(T/dt))))
-    # input_array = 0.01*np.ones((num_inputs, int(np.ceil(T/dt))))
+    input_array = np.zeros((num_inputs, int(np.ceil(T/dt))))
+    input_array[0, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (period))
+    input_array[1, :] = np.sin(2 * np.pi * np.arange(int(np.ceil(T / dt))) / (2 * period) + phi)
 
     rnn.run(T, input_array)
-    fig, ax = rnn.plot_history(list_of_neurons=[0,1,2,3,4])
+    fig, ax = rnn.plot_history(list_of_neurons=np.arange(5))
     plt.show(block=True)

@@ -39,13 +39,14 @@ def plot_stats(time, errs, dw_norms):
     return fig
 
 if __name__ == '__main__':
-    N = 1000
-    tau = 10  # ms
-    dt = 1  # ms
+    N = 100
+    tau = 25  # ms
+    dt = 0.1  # ms
     num_inputs = 1
-    T_train = 4*1440  # ms
+    num_outs = 1
+    T_train = 6*1440  # ms
 
-    rnn = CT_RNN(N, num_inps=num_inputs, dt=dt, tau=tau)
+    rnn = CT_RNN(N, num_inps=num_inputs, num_outs=num_outs, dt=dt, tau=tau, sr=0.9, input_scaling=1, fb_scaling=1)
 
     sim_steps = int(np.ceil(T_train/dt))
     simtime_array = np.arange(sim_steps)*dt
@@ -65,20 +66,20 @@ if __name__ == '__main__':
          (amp / 3.0) * np.sin(4.0 * np.pi * (1.0/(out_period)) * simtime_array + phi_4)
     target = target / 1.5
 
-    zs, errs, dw_norms = rnn.train(T_train, input_array, target, noise=False)
+    zs, errs, dw_norms = rnn.train(T_train, input_array, target, noise_amp=0.05)
     print(f"error for the last 100 timesteps: {np.mean(errs[-100:])}")
-    rnn.plot_history(list_of_neurons=[0,1,2,3,4,5])
+    rnn.plot_history(list_of_neurons=np.arange(5))
 
     fig = plot_performance(time=simtime_array, input=input_array[0, :], target=target, z=zs, title="Training")
     img_file = os.path.join(get_project_root(), "imgs", "sine_wave_training")
-    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
-    plt.savefig(img_file + ".png", ssbbox_inches="tight")
+    plt.savefig(img_file + ".pdf", bbox_inches="tight")
+    plt.savefig(img_file + ".png", bbox_inches="tight")
     plt.show()
     plt.close()
     fig = plot_stats(simtime_array, errs, dw_norms)
     img_file = os.path.join(get_project_root(), "imgs", "sine_wave_training_stats")
-    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
-    plt.savefig(img_file + ".png", ssbbox_inches="tight")
+    plt.savefig(img_file + ".pdf", bbox_inches="tight")
+    plt.savefig(img_file + ".png", bbox_inches="tight")
     plt.show()
     plt.close()
 
@@ -94,11 +95,11 @@ if __name__ == '__main__':
     rnn.run(T=T_test, input_array=input_array)
     vs = rnn.get_history()
     # get the output as a time sequence
-    zs = np.sum((np.hstack([rnn.w_out.reshape(-1, 1)]*vs.shape[-1]) * rnn.activation(vs)), axis = 0)
+    zs = np.sum((np.hstack([rnn.W_out.reshape(-1, 1)]*vs.shape[-1]) * rnn.activation(vs)), axis = 0)
     fig = plot_performance(time=simtime_array, input=input_array[0,:], target=target, z=zs, title="Test")
     img_file = os.path.join(get_project_root(), "imgs", "sine_wave_testing")
-    plt.savefig(img_file + ".pdf", ssbbox_inches="tight")
-    plt.savefig(img_file + ".png", ssbbox_inches="tight")
+    plt.savefig(img_file + ".pdf", bbox_inches="tight")
+    plt.savefig(img_file + ".png", bbox_inches="tight")
     plt.show()
     plt.close()
 
