@@ -57,14 +57,14 @@ def plot_stats(time, errs, dw_norms):
     return fig
 
 if __name__ == '__main__':
-    N = 1000
-    tau = 20  # ms
+    N = 500
+    tau = 10  # ms
     dt = 0.1  # ms
     num_inputs = 1
     num_outs = 1
-    T_train = 6000  # ms
+    T_train = 10000  # ms
 
-    rnn = CT_RNN(N, num_inps=num_inputs, num_outs=num_outs, dt=dt, tau=tau, sr=0.9, fb_scaling=1)
+    rnn = CT_RNN(N, num_inps=num_inputs, num_outs=num_outs, dt=dt, tau=tau, sr=1.4, fb_scaling=1.0)
 
     sim_steps = int(np.ceil(T_train/dt))
     simtime_array = np.arange(sim_steps)*dt
@@ -72,9 +72,9 @@ if __name__ == '__main__':
     input_array = np.zeros((num_inputs, sim_steps))
     target = scale(generate_Mackey_Glass_trajectory(T=T_train, dt=dt))
 
-    zs, errs, dw_norms = rnn.train(T_train, input_array, target, noise_amp=0.05)
+    zs, errs, dw_norms = rnn.train(T_train, input_array, target, noise_amp=0.0)
     print(f"error for the last 100 timesteps: {np.mean(errs[-100:])}")
-    rnn.plot_history(list_of_neurons=np.arange(5))
+    # rnn.plot_history(list_of_neurons=np.arange(5))
 
     fig = plot_performance(time=simtime_array, input=input_array[0, :], target=target, z=zs, title="Training")
     img_file = os.path.join(get_project_root(), "imgs", "mackey_glass_training")
